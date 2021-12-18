@@ -1,1 +1,3 @@
-# [test](https://lch&#122;h&#51;473.github.io "lch&#122;h&#51;473's Homepage")
+临时网站
+大部分内容copy了lchzh3473.github.io的内容
+等我学学html就改（
