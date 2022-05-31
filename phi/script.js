@@ -1,5 +1,12 @@
 "use strict";
-const _i = ['Phigros模拟器', [1, 4, 14], 1611795955, 1640231350];
+const _i = ['Phigros模拟器', [1, 4, 18], 1611795955, 1653298408];
+const urls = {
+	zip: ["//cdn.jsdelivr.net/npm/@zip.js/zip.js/dist/zip.min.js", "//fastly.jsdelivr.net/npm/@zip.js/zip.js/dist/zip.min.js"],
+	browser: ["//cdn.jsdelivr.net/gh/mumuy/browser/Browser.js", "//fastly.jsdelivr.net/gh/mumuy/browser/Browser.js", "//passer-by.com/browser/Browser.js"],
+	bitmap: ["//cdn.jsdelivr.net/gh/Kaiido/createImageBitmap/dist/createImageBitmap.js", "//fastly.jsdelivr.net/gh/Kaiido/createImageBitmap/dist/createImageBitmap.js"],
+	blur: ["//cdn.jsdelivr.net/npm/stackblur-canvas", "//fastly.jsdelivr.net/npm/stackblur-canvas"],
+	md5: ["//cdn.jsdelivr.net/npm/md5-js", "//fastly.jsdelivr.net/npm/md5-js"],
+}
 document.oncontextmenu = e => e.preventDefault(); //qwq
 for (const i of document.getElementById("view-nav").children) {
 	i.addEventListener("click", function() {
@@ -40,17 +47,11 @@ const message = {
 	get num() {
 		return this.view.querySelectorAll(".msgbox").length;
 	},
-	sendMessage(msg) {
-		const num = this.num;
-		this.out.className = num ? "warning" : "accept";
-		this.out.innerText = msg + (num ? `（发现${num}个问题，点击查看）` : "");
-		this.lastMessage = msg;
-		this.isError = false;
-	},
-	sendWarning(msg) {
+	msgbox(msg, options = {}) {
 		const msgbox = document.createElement("div");
 		msgbox.innerText = msg;
 		msgbox.classList.add("msgbox");
+		Object.assign(msgbox.style, options);
 		const btn = document.createElement("a");
 		btn.innerText = "忽略";
 		btn.style.float = "right";
@@ -61,15 +62,30 @@ const message = {
 		}
 		msgbox.appendChild(btn);
 		this.view.appendChild(msgbox);
+	},
+	sendMessage(msg) {
+		const num = this.num;
+		this.out.className = num ? "warning" : "accept";
+		this.out.innerText = msg + (num ? `（发现${num}个问题，点击查看）` : "");
+		this.lastMessage = msg;
+		this.isError = false;
+	},
+	sendWarning(msg) {
+		this.msgbox(msg, { backgroundColor: "#fffbe5", color: "#5c3c00" })
 		if (this.isError) this.sendError(this.lastMessage);
 		else this.sendMessage(this.lastMessage);
 	},
 	sendError(msg) {
+		this.msgbox(msg, { backgroundColor: "#fee", color: "#e10000" });
 		const num = this.num;
 		this.out.className = "error";
-		this.out.innerText = msg + (num ? `（发现${num}个问题，点击查看）` : "");
+		this.out.innerText = msg; // + (num ? `（发现${num}个问题，点击查看）` : "");
 		this.lastMessage = msg;
 		this.isError = true;
+	},
+	throwError(msg) {
+		this.sendError(msg);
+		throw new Error(msg);
 	}
 }
 //
@@ -87,8 +103,19 @@ const selectaspectratio = document.getElementById("select-aspect-ratio");
 const selectglobalalpha = document.getElementById("select-global-alpha");
 const selectflip = document.getElementById("select-flip");
 const selectspeed = document.getElementById("select-speed");
+const config = {
+	speed: 1,
+	setSpeed(num) {
+		this.speed = 2 ** (num / 12);
+	}
+};
+selectspeed.addEventListener("change", evt => {
+	const dict = { Slowest: -9, Slower: -4, "": 0, Faster: 3, Fastest: 5 };
+	config.setSpeed(dict[evt.target.value]);
+});
 const scfg = function() {
 	let arr = [];
+	if (qwq[5]) arr.push("Reversed");
 	switch (selectflip.value) {
 		case "bl":
 			arr.push("FlipX");
@@ -101,21 +128,7 @@ const scfg = function() {
 			break;
 		default:
 	}
-	switch (selectspeed.value) {
-		case "0.594604":
-			arr.push("Slowest");
-			break;
-		case "0.793701":
-			arr.push("Slower");
-			break;
-		case "1.189207":
-			arr.push("Faster");
-			break;
-		case "1.334840":
-			arr.push("Fastest");
-			break;
-		default:
-	}
+	if (selectspeed.value) arr.push(selectspeed.value);
 	if (isPaused) arr.push("Paused");
 	if (arr.length == 0) return "";
 	return `(${arr.join("+")})`;
@@ -145,6 +158,7 @@ const canvasos = document.createElement("canvas"); //用于绘制游戏主界面
 const ctxos = canvasos.getContext("2d");
 const Renderer = { //存放谱面
 	chart: null,
+	chart2: null, //qwq
 	bgImage: null,
 	bgImageBlur: null,
 	bgMusic: null,
@@ -186,11 +200,62 @@ const full = {
 		return !!(document.fullscreenEnabled || document.webkitFullscreenEnabled || document.mozFullScreenEnabled || document.msFullscreenEnabled);
 	}
 };
-//兼容性检测
-if (typeof zip != "object") message.sendWarning("检测到zip组件未正常加载，将无法使用模拟器");
-if (typeof createImageBitmap != "function") message.sendWarning("检测到当前浏览器不支持ImageBitmap，将无法使用模拟器");
-if (!(window.AudioContext || window.webkitAudioContext)) message.sendWarning("检测到当前浏览器不支持AudioContext，将无法使用模拟器");
-if (!full.enabled) message.sendWarning("检测到当前浏览器不支持全屏，播放时双击右下角将无反应");
+async function checkSupport() {
+	window.addEventListener('error', e => message.sendError(e.message));
+	window.addEventListener('unhandledrejection', e => message.sendError(e.reason));
+	//兼容性检测
+	message.sendMessage("加载StackBlur组件...");
+	if (typeof StackBlur != "object") await loadJS(urls.blur).catch(() => message.throwError("StackBlur组件加载失败，请检查网络"));
+	message.sendMessage("加载md5组件...");
+	if (typeof md5 != "function") await loadJS(urls.md5).catch(() => message.throwError("md5组件加载失败，请检查网络"));
+	message.sendMessage("加载Browser组件...");
+	if (typeof Browser != "function") await loadJS(urls.browser).catch(() => message.throwError("Browser组件加载失败，请检查网络"));
+	message.sendMessage("加载zip组件...");
+	if (typeof zip != "object") await loadJS(urls.zip).catch(() => message.throwError("zip组件加载失败，请检查网络"));
+	message.sendMessage("检查浏览器兼容性...");
+	const info = new Browser;
+	if (info.browser == "XiaoMi") message.sendWarning("检测到小米浏览器，可能存在切后台声音消失的问题");
+	if (info.os == "iOS" && parseFloat(info.osVersion) < 14.5) message.sendWarning("检测到iOS版本小于14.5，可能无法正常使用模拟器");
+	if (info.os == "Mac OS" && parseFloat(info.osVersion) < 14.1) message.sendWarning("检测到MacOS版本小于14.1，可能无法正常使用模拟器");
+	// if (info.os == "iOS" && parseFloat(info.osVersion) >= 15.4) message.sendWarning(`${info.os}${info.osVersion}：qwq`);
+	if (info.os == "iOS" || info.os == "Mac OS") window["isApple"] = true;
+	if (typeof createImageBitmap != "function") await loadJS(urls.bitmap).catch(() => message.throwError("当前浏览器不支持ImageBitmap"));
+	message.sendMessage("加载声音组件...");
+	const oggCompatible = !!(new Audio).canPlayType("audio/ogg");
+	if (!oggCompatible) await loadJS("/lib/oggmented-bundle.js").catch(() => message.throwError("oggmented兼容模块加载失败，请检查网络"));
+	if (!oggCompatible && typeof oggmented != "object") message.throwError("oggmented兼容模块运行失败，请检查浏览器版本");
+	const AudioContext = window.AudioContext || window.webkitAudioContext;
+	if (!AudioContext) message.throwError("当前浏览器不支持AudioContext");
+	const actx = oggCompatible ? new AudioContext() : new oggmented.OggmentedAudioContext(); //兼容Safari
+	const gain = actx.createGain();
+	const playSound = (res, loop, isOut, offset, playbackrate) => {
+		const bufferSource = actx.createBufferSource();
+		bufferSource.buffer = res;
+		bufferSource.loop = loop; //循环播放
+		bufferSource.connect(gain);
+		bufferSource.playbackRate.value = Number(playbackrate || 1);
+		if (isOut) gain.connect(actx.destination);
+		bufferSource.start(0, offset);
+		return () => bufferSource.stop();
+	}
+	Object.assign(window, { actx, stopPlaying, playSound });
+	message.sendMessage("检测是否支持全屏...");
+	if (!full.enabled) message.sendWarning("检测到当前浏览器不支持全屏，播放时双击右下角将无反应");
+
+	function loadJS(qwq) {
+		const a = (function*(arg) { yield* arg; })(qwq instanceof Array ? qwq.reverse() : arguments);
+		const load = url => new Promise((resolve, reject) => {
+			if (!url) return reject();
+			const script = document.createElement('script');
+			script.onload = () => resolve(script);
+			script.onerror = () => load(a.next().value).then(script => resolve(script)).catch(e => reject(e));
+			script.src = url;
+			script.crossOrigin = "anonymous";
+			document.head.appendChild(script);
+		});
+		return load(a.next().value);
+	}
+}
 //qwq
 selectbg.onchange = () => {
 	Renderer.bgImage = bgs[selectbg.value];
@@ -234,16 +299,17 @@ function resizeCanvas() {
 	canvasos.height = realHeight * devicePixelRatio;
 	wlen = canvasos.width / 2;
 	hlen = canvasos.height / 2;
-	wlen2 = canvasos.width / 18;
+	wlen2 = canvasos.width * 0.05625;
 	hlen2 = canvasos.height * 0.6; //控制note流速
 	noteScale = canvasos.width / (selectscaleratio.value || 8e3); //note、特效缩放
 	lineScale = canvasos.width > canvasos.height * 0.75 ? canvasos.height / 18.75 : canvasos.width / 14.0625; //判定线、文字缩放
 }
 //qwq[water,demo,democlick]
-const qwq = [true, false, 3, 0];
+const qwq = [true, false, 3, 0, 0, 0];
 document.getElementById("demo").classList.add("hide");
+eval(atob("IWZ1bmN0aW9uKCl7Y29uc3QgdD1uZXcgRGF0ZTtpZigxIT10LmdldERhdGUoKXx8MyE9dC5nZXRNb250aCgpKXJldHVybjtjb25zdCBuPWRvY3VtZW50LmNyZWF0ZUVsZW1lbnQoInNjcmlwdCIpO24udHlwZT0idGV4dC9qYXZhc2NyaXB0IixuLnNyYz0iLi9yLW1pbi5qcyIsZG9jdW1lbnQuZ2V0RWxlbWVudHNCeVRhZ05hbWUoImhlYWQiKVswXS5hcHBlbmRDaGlsZChuKX0oKTs"));
 document.querySelector(".title").addEventListener("click", function() {
-	if (qwq[1]) qwq[0] = !qwq[0];
+	if (qwq[1]) /*qwq[0] = !qwq[0]*/;
 	else if (!--qwq[2]) document.getElementById("demo").classList.remove("hide");
 });
 document.getElementById("demo").addEventListener("click", function() {
@@ -276,7 +342,7 @@ const specialClick = {
 		full.toggle(canvas);
 	}],
 	click(id) {
-		const now = Date.now();
+		const now = performance.now();
 		if (now - this.time[id] < 300) this.func[id]();
 		this.time[id] = now;
 	}
@@ -405,7 +471,7 @@ class Judgements extends Array {
 						if (deltaTime > (hyperMode.checked ? 0.12 : 0.16)) {
 							if (!this[j].catched) {
 								i.status = 6; //console.log("Bad", i.name);
-								i.badtime = Date.now();
+								i.badtime = performance.now();
 							}
 						} else if (deltaTime > 0.08) {
 							i.status = 7; //console.log("Good(Early)", i.name);
@@ -458,11 +524,11 @@ class Judgements extends Array {
 				}
 			} else if (i.type == 3) {
 				if (i.status3) {
-					if ((Date.now() - i.status3) * i.holdTime >= 1.6e4 * i.realHoldTime) { //间隔时间与bpm成反比，待实测
+					if ((performance.now() - i.status3) * i.holdTime >= 1.6e4 * i.realHoldTime) { //间隔时间与bpm成反比，待实测
 						if (i.status2 % 4 == 0) clickEvents1.push(ClickEvent1.getClickPerfect(i.projectX, i.projectY));
 						else if (i.status2 % 4 == 1) clickEvents1.push(hyperMode.checked ? ClickEvent1.getClickGreat(i.projectX, i.projectY) : ClickEvent1.getClickPerfect(i.projectX, i.projectY));
 						else if (i.status2 % 4 == 3) clickEvents1.push(ClickEvent1.getClickGood(i.projectX, i.projectY));
-						i.status3 = Date.now();
+						i.status3 = performance.now();
 					}
 					if (deltaTime + i.realHoldTime < 0.2) {
 						if (!i.status) {
@@ -481,26 +547,26 @@ class Judgements extends Array {
 								i.status2 = 7; //console.log("Good(Early)", i.name);
 								clickEvents1.push(ClickEvent1.getClickGood(i.projectX, i.projectY));
 								clickEvents2.push(ClickEvent2.getClickEarly(i.projectX, i.projectY));
-								i.status3 = Date.now();
+								i.status3 = performance.now();
 							} else if (deltaTime > 0.04) {
 								i.status2 = 5; //console.log("Perfect(Early)", i.name);
 								clickEvents1.push(hyperMode.checked ? ClickEvent1.getClickGreat(i.projectX, i.projectY) : ClickEvent1.getClickPerfect(i.projectX, i.projectY));
 								clickEvents2.push(ClickEvent2.getClickEarly(i.projectX, i.projectY));
-								i.status3 = Date.now();
+								i.status3 = performance.now();
 							} else if (deltaTime > -0.04 || i.frameCount < 1) {
 								i.status2 = 4; //console.log("Perfect(Max)", i.name);
 								clickEvents1.push(ClickEvent1.getClickPerfect(i.projectX, i.projectY));
-								i.status3 = Date.now();
+								i.status3 = performance.now();
 							} else if (deltaTime > -0.08 || i.frameCount < 2) {
 								i.status2 = 1; //console.log("Perfect(Late)", i.name);
 								clickEvents1.push(hyperMode.checked ? ClickEvent1.getClickGreat(i.projectX, i.projectY) : ClickEvent1.getClickPerfect(i.projectX, i.projectY));
 								clickEvents2.push(ClickEvent2.getClickLate(i.projectX, i.projectY));
-								i.status3 = Date.now();
+								i.status3 = performance.now();
 							} else {
 								i.status2 = 3; //console.log("Good(Late)", i.name);
 								clickEvents1.push(ClickEvent1.getClickGood(i.projectX, i.projectY));
 								clickEvents2.push(ClickEvent2.getClickLate(i.projectX, i.projectY));
-								i.status3 = Date.now();
+								i.status3 = performance.now();
 							}
 							this.splice(j, 1);
 							i.status4 = false;
@@ -592,7 +658,7 @@ class ClickEvent1 {
 	constructor(offsetX, offsetY, n1, n2, n3) {
 		this.offsetX = Number(offsetX) || 0;
 		this.offsetY = Number(offsetY) || 0;
-		this.time = Date.now();
+		this.time = performance.now();
 		this.duration = 500;
 		this.images = res["Clicks"][n1]; //以后做缺少检测
 		this.color = String(n3);
@@ -612,7 +678,7 @@ class ClickEvent2 {
 	constructor(offsetX, offsetY, n1, n2) {
 		this.offsetX = Number(offsetX) || 0;
 		this.offsetY = Number(offsetY) || 0;
-		this.time = Date.now();
+		this.time = performance.now();
 		this.duration = 250;
 		this.color = String(n1);
 		this.text = String(n2);
@@ -740,29 +806,18 @@ function getOffsetTop(element) {
 	}
 	return a;
 }
-//声音组件
-const AudioContext = window.AudioContext || window.webkitAudioContext;
-const actx = (new Audio()).canPlayType("audio/ogg") == "" ? new oggmented.OggmentedAudioContext() : new AudioContext(); //兼容Safari
+//原来放声音组件的地方qwq
 const stopPlaying = [];
-const gain = actx.createGain();
-const playSound = (res, loop, isOut, offset, playbackrate) => {
-	const bufferSource = actx.createBufferSource();
-	bufferSource.buffer = res;
-	bufferSource.loop = loop; //循环播放
-	bufferSource.connect(gain);
-	bufferSource.playbackRate.value = Number(playbackrate || 1);
-	if (isOut) gain.connect(actx.destination);
-	bufferSource.start(0, offset);
-	return () => bufferSource.stop();
-}
 const res = {}; //存放资源
 resizeCanvas();
 uploads.classList.add("disabled");
 select.classList.add("disabled");
 //初始化
-window.onload = function() {
+window.onload = async function() {
+	message.sendMessage("正在初始化...");
+	await checkSupport();
 	//加载资源
-	(async function() {
+	await (async function() {
 		let loadedNum = 0;
 		await Promise.all((obj => {
 			const arr = [];
@@ -798,7 +853,7 @@ window.onload = function() {
 			HitSong2: "src/HitSong2.ogg"
 		}).map(([name, src], _i, arr) => {
 			const xhr = new XMLHttpRequest();
-			xhr.open("get", src, true);
+			xhr.open("get", `${src}${window["isApple"] ? `?v=${Date.now()}` : ""}`, true); //针对苹果设备强制刷新
 			xhr.responseType = 'arraybuffer';
 			xhr.send();
 			return new Promise(resolve => {
@@ -823,6 +878,12 @@ window.onload = function() {
 		message.sendMessage("等待上传文件...");
 		upload.parentElement.classList.remove("disabled");
 	})();
+	const qwq = () => {
+		const b = document.createElement("canvas").getContext("2d");
+		b.drawImage(res["JudgeLine"], 0, 0);
+		return b.getImageData(0, 0, 1, 1).data[0];
+	}
+	if (!qwq()) message.throwError("检测到图片加载异常，请关闭所有应用程序然后重试");
 }
 async function qwqImage(img, color) {
 	const clickqwq = imgShader(img, color);
@@ -834,6 +895,7 @@ async function qwqImage(img, color) {
 }
 //必要组件
 let stopDrawing;
+let energy = 0;
 const stat = {
 	noteRank: [0, 0, 0, 0, 0, 0, 0, 0],
 	combos: [0, 0, 0, 0, 0],
@@ -893,7 +955,7 @@ const stat = {
 		const l3 = (Number(inputLevel.value.match(/\d+$/))).toString(36).slice(-1);
 		return l1 + l2 + l3;
 	},
-	getData(isAuto) {
+	getData(isAuto, speed = "") {
 		const s1 = this.data[this.id].slice(0, 3);
 		const s2 = this.data[this.id].slice(3, 7);
 		const l1 = Math.round(this.accNum * 1e4 + 566).toString(22).slice(-3);
@@ -904,25 +966,38 @@ const stat = {
 		if (!isAuto) this.data[this.id] = (s1 > l1 ? s1 : l1) + (s2 > l2 ? s2 : l2) + l3;
 		const arr = [];
 		for (const i in this.data) arr.push(i + this.data[i]);
-		localStorage.setItem("phi", arr.sort(() => Math.random() - 0.5).join(""));
-		if (isAuto) return [false, scoreBest, "", "AUTO PLAY", "#fe4365"];
-		if (selectspeed.value != "1") return [false, scoreBest, "", "SPEED CHANGED", "#65fe43"];
-		let brr = [s2 < l2, scoreBest, (s2 > l2 ? "- " : "+ ") + Math.abs(scoreBest - this.scoreStr)];
-		if (this.lineStatus == 1) brr.push("ALL  PERFECT", "#ffc500");
-		else if (this.lineStatus == 2) brr.push("ALL  PERFECT", "#91ff8f");
-		else if (this.lineStatus == 3) brr.push("FULL  COMBO", "#00bef1");
-		else brr.push("", "#fff");
-		return brr;
+		localStorage.setItem(`phi-${speed}`, arr.sort(() => Math.random() - 0.5).join(""));
+		const pbj = {
+			newBestColor: s2 < l2 ? "#18ffbf" : "#fff",
+			newBestStr: s2 < l2 ? "NEW BEST" : "BEST",
+			scoreBest: scoreBest,
+			scoreDelta: (s2 > l2 ? "- " : "+ ") + Math.abs(scoreBest - this.scoreStr),
+			textAboveColor: "#65fe43",
+			textAboveStr: `  ( Speed ${config.speed.toFixed(2)}x )`,
+			textBelowColor: "#fe4365",
+			textBelowStr: "AUTO PLAY",
+		}
+		if (config.speed == 1) Object.assign(pbj, { textAboveStr: "" });
+		if (isAuto) return Object.assign(pbj, { newBestColor: "#fff", newBestStr: "BEST", scoreDelta: "" });
+		if (this.lineStatus == 1) return Object.assign(pbj, { textBelowStr: "ALL  PERFECT", textBelowColor: "#ffc500" });
+		if (this.lineStatus == 2) return Object.assign(pbj, { textBelowStr: "ALL  PERFECT", textBelowColor: "#91ff8f" })
+		if (this.lineStatus == 3) return Object.assign(pbj, { textBelowStr: "FULL  COMBO", textBelowColor: "#00bef1" });
+		return Object.assign(pbj, { textBelowStr: "" });
 	},
-	reset(numOfNotes, id) {
+	reset(numOfNotes, id, speed = "") {
+		const key = `phi-${speed}`;
 		this.numOfNotes = Number(numOfNotes) || 0;
 		this.combo = 0;
 		this.maxcombo = 0;
 		this.noteRank = [0, 0, 0, 0, 0, 0, 0, 0]; //4:PM,5:PE,1:PL,7:GE,3:GL,6:BE,2:BL
 		this.combos = [0, 0, 0, 0, 0]; //不同种类note实时连击次数
 		this.data = {};
-		if (localStorage.getItem("phi") == null) localStorage.setItem("phi", ""); //初始化存储
-		const str = localStorage.getItem("phi");
+		if (speed == "" && localStorage.getItem("phi")) {
+			localStorage.setItem(key, localStorage.getItem("phi"));
+			localStorage.removeItem("phi");
+		}
+		if (localStorage.getItem(key) == null) localStorage.setItem(key, ""); //初始化存储
+		const str = localStorage.getItem(key);
 		for (let i = 0; i < parseInt(str.length / 40); i++) {
 			const data = str.slice(i * 40, i * 40 + 40);
 			this.data[data.slice(0, 32)] = data.slice(-8);
@@ -938,6 +1013,8 @@ const stat = {
 		if (this.combo > this.maxcombo) this.maxcombo = this.combo;
 		this.combos[0]++;
 		this.combos[type]++;
+		if (qwq[4]) energy++;
+		if (this.lineStatus != 1) energy = 0;
 	}
 }
 //const stat = new Stat();
@@ -956,12 +1033,12 @@ upload.onchange = function() {
 const time2Str = time => `${parseInt(time / 60)}:${`00${parseInt(time % 60)}`.slice(-2)}`;
 const frameTimer = { //计算fps
 	tick: 0,
-	time: Date.now(),
+	time: performance.now(),
 	fps: "",
 	addTick(fr = 10) {
 		if (++this.tick >= fr) {
 			this.tick = 0;
-			this.fps = (1e3 * fr / (-this.time + (this.time = Date.now()))).toFixed(0);
+			this.fps = (1e3 * fr / (-this.time + (this.time = performance.now()))).toFixed(0);
 		}
 		return this.fps;
 	}
@@ -972,7 +1049,7 @@ class Timer {
 	}
 	play() {
 		if (!this.isPaused) throw new Error("Time has been playing");
-		this.t1 = Date.now();
+		this.t1 = performance.now();
 		this.isPaused = false;
 	}
 	pause() {
@@ -990,7 +1067,7 @@ class Timer {
 	}
 	get time() {
 		if (this.isPaused) return this.t0;
-		return this.t0 + Date.now() - this.t1;
+		return this.t0 + performance.now() - this.t1;
 	}
 	get second() {
 		return this.time / 1e3;
@@ -1025,25 +1102,27 @@ const loadFile = function(file) {
 			}
 			console.log(zipData);
 			let loadedNum = 0;
-			const zipRaw = await Promise.all(zipData.map(i => new Promise(async resolve => {
+			const zipRaw = await Promise.all(zipData.map(async i => {
 				if (i.filename == "line.csv") {
 					const data = await i.getData(new zip.TextWriter());
 					const chartLine = csv2array(data, true);
 					chartLineData.push(...chartLine);
 					loading(++loadedNum);
-					resolve(chartLine);
-				} else if (i.filename == "info.csv") {
+					return chartLine;
+				}
+				if (i.filename == "info.csv") {
 					const data_2 = await i.getData(new zip.TextWriter());
 					const chartInfo = csv2array(data_2, true);
 					chartInfoData.push(...chartInfo);
 					loading(++loadedNum);
-					resolve(chartInfo);
-				} else i.getData(new zip.Uint8ArrayWriter()).then(async data => {
+					return chartInfo;
+				}
+				return i.getData(new zip.Uint8ArrayWriter()).then(async data => {
 					const audioData = await actx.decodeAudioData(data.buffer);
 					bgms[i.filename] = audioData;
 					selectbgm.appendChild(createOption(i.filename, i.filename));
 					loading(++loadedNum);
-					resolve(audioData);
+					return audioData;
 				}).catch(async () => {
 					const data = await i.getData(new zip.BlobWriter());
 					const imageData = await createImageBitmap(data);
@@ -1051,7 +1130,7 @@ const loadFile = function(file) {
 					bgsBlur[i.filename] = await createImageBitmap(imgBlur(imageData));
 					selectbg.appendChild(createOption(i.filename, i.filename));
 					loading(++loadedNum);
-					resolve(imageData);
+					return imageData;
 				}).catch(async () => {
 					const data = await i.getData(new zip.TextWriter());
 					console.log(JSON.parse(data)); //test
@@ -1060,7 +1139,7 @@ const loadFile = function(file) {
 					charts[i.filename]["md5"] = md5(data);
 					selectchart.appendChild(createOption(i.filename, i.filename));
 					loading(++loadedNum);
-					resolve(jsonData);
+					return jsonData;
 				}).catch(async () => {
 					const data = await i.getData(new zip.TextWriter());
 					const jsonData = await chart123(chartp23(data, i.filename));
@@ -1068,14 +1147,14 @@ const loadFile = function(file) {
 					charts[i.filename]["md5"] = md5(data);
 					selectchart.appendChild(createOption(i.filename, i.filename));
 					loading(++loadedNum);
-					resolve(jsonData);
+					return jsonData;
 				}).catch(error => {
 					console.log(error);
 					loading(++loadedNum);
 					message.sendWarning(`不支持的文件：${i.filename}`);
-					resolve(undefined);
+					return undefined;
 				});
-			})));
+			}));
 
 			function createOption(innerhtml, value) {
 				const option = document.createElement("option");
@@ -1114,7 +1193,7 @@ function prerenderChart(chart) {
 	//优化events
 	for (const LineId in chartNew.judgeLineList) {
 		const i = chartNew.judgeLineList[LineId];
-		i.bpm *= Number(selectspeed.value);
+		i.bpm *= config.speed;
 		i.lineId = LineId;
 		i.offsetX = 0;
 		i.offsetY = 0;
@@ -1152,7 +1231,7 @@ function prerenderChart(chart) {
 		note.lineId = lineId;
 		note.noteId = noteId;
 		note.isAbove = isAbove;
-		note.name = `${lineId}${isAbove ? "+" : "-"}${noteId}`;
+		note.name = `${lineId}${isAbove ? "+" : "-"}${noteId}${" tdhf".split("")[note.type]}`;
 		Renderer.notes.push(note);
 		if (note.type == 1) Renderer.taps.push(note);
 		else if (note.type == 2) Renderer.drags.push(note);
@@ -1178,71 +1257,6 @@ function prerenderChart(chart) {
 	for (const i of Renderer.notes) timeOfMulti[i.realTime.toFixed(6)] = timeOfMulti[i.realTime.toFixed(6)] ? 2 : 1;
 	for (const i of Renderer.notes) i.isMulti = (timeOfMulti[i.realTime.toFixed(6)] == 2);
 	return chartNew;
-	//规范判定线事件
-	function arrangeLineEvent(events) {
-		const oldEvents = JSON.parse(JSON.stringify(events)); //深拷贝
-		const newEvents = [{ //以1-1e6开头
-			startTime: 1 - 1e6,
-			endTime: 0,
-			start: oldEvents[0] ? oldEvents[0].start : 0,
-			end: oldEvents[0] ? oldEvents[0].end : 0,
-			start2: oldEvents[0] ? oldEvents[0].start2 : 0,
-			end2: oldEvents[0] ? oldEvents[0].end2 : 0
-		}];
-		oldEvents.push({ //以1e9结尾
-			startTime: 0,
-			endTime: 1e9,
-			start: oldEvents[oldEvents.length - 1] ? oldEvents[oldEvents.length - 1].start : 0,
-			end: oldEvents[oldEvents.length - 1] ? oldEvents[oldEvents.length - 1].end : 0,
-			start2: oldEvents[oldEvents.length - 1] ? oldEvents[oldEvents.length - 1].start2 : 0,
-			end2: oldEvents[oldEvents.length - 1] ? oldEvents[oldEvents.length - 1].end2 : 0
-		});
-		for (const i2 of oldEvents) { //保证时间连续性
-			const i1 = newEvents[newEvents.length - 1];
-			if (i1.endTime > i2.endTime);
-			else if (i1.endTime == i2.startTime) newEvents.push(i2);
-			else if (i1.endTime < i2.startTime) newEvents.push({
-				startTime: i1.endTime,
-				endTime: i2.startTime,
-				start: i1.end,
-				end: i1.end,
-				start2: i1.end2,
-				end2: i1.end2
-			}, i2);
-			else if (i1.endTime > i2.startTime) newEvents.push({
-				startTime: i1.endTime,
-				endTime: i2.endTime,
-				start: (i2.start * (i2.endTime - i1.endTime) + i2.end * (i1.endTime - i2.startTime)) / (i2.endTime - i2.startTime),
-				end: i1.end,
-				start2: (i2.start2 * (i2.endTime - i1.endTime) + i2.end2 * (i1.endTime - i2.startTime)) / (i2.endTime - i2.startTime),
-				end2: i1.end2
-			});
-		}
-		//合并相同变化率事件
-		const newEvents2 = [newEvents.shift()];
-		for (const i2 of newEvents) {
-			const i1 = newEvents2[newEvents2.length - 1];
-			const d1 = i1.endTime - i1.startTime;
-			const d2 = i2.endTime - i2.startTime;
-			if (i2.startTime == i2.endTime);
-			else if (i1.end == i2.start && i1.end2 == i2.start2 && (i1.end - i1.start) * d2 == (i2.end - i2.start) * d1 && (i1.end2 - i1.start2) * d2 == (i2.end2 - i2.start2) * d1) {
-				i1.endTime = i2.endTime;
-				i1.end = i2.end;
-				i1.end2 = i2.end2;
-			} else newEvents2.push(i2);
-		}
-		return JSON.parse(JSON.stringify(newEvents2));
-	}
-	//规范speedEvents
-	function arrangeSpeedEvent(events) {
-		const newEvents = [];
-		for (const i2 of events) {
-			const i1 = newEvents[newEvents.length - 1];
-			if (!i1 || i1.value != i2.value) newEvents.push(i2);
-			else i1.endTime = i2.endTime;
-		}
-		return JSON.parse(JSON.stringify(newEvents));
-	}
 	//添加realTime
 	function addRealTime(events, bpm) {
 		for (const i of events) {
@@ -1253,6 +1267,71 @@ function prerenderChart(chart) {
 		}
 		return events;
 	}
+} //规范判定线事件
+function arrangeLineEvent(events) {
+	const oldEvents = JSON.parse(JSON.stringify(events)); //深拷贝
+	const newEvents = [{ //以1-1e6开头
+		startTime: 1 - 1e6,
+		endTime: 0,
+		start: oldEvents[0] ? oldEvents[0].start : 0,
+		end: oldEvents[0] ? oldEvents[0].start : 0,
+		start2: oldEvents[0] ? oldEvents[0].start2 : 0,
+		end2: oldEvents[0] ? oldEvents[0].start2 : 0
+	}];
+	oldEvents.push({ //以1e9结尾
+		startTime: 0,
+		endTime: 1e9,
+		start: oldEvents[oldEvents.length - 1] ? oldEvents[oldEvents.length - 1].end : 0,
+		end: oldEvents[oldEvents.length - 1] ? oldEvents[oldEvents.length - 1].end : 0,
+		start2: oldEvents[oldEvents.length - 1] ? oldEvents[oldEvents.length - 1].end2 : 0,
+		end2: oldEvents[oldEvents.length - 1] ? oldEvents[oldEvents.length - 1].end2 : 0
+	});
+	for (const i2 of oldEvents) { //保证时间连续性
+		const i1 = newEvents[newEvents.length - 1];
+		if (i2.startTime > i2.endTime) continue;
+		if (i1.endTime > i2.endTime);
+		else if (i1.endTime == i2.startTime) newEvents.push(i2);
+		else if (i1.endTime < i2.startTime) newEvents.push({
+			startTime: i1.endTime,
+			endTime: i2.startTime,
+			start: i1.end,
+			end: i1.end,
+			start2: i1.end2,
+			end2: i1.end2
+		}, i2);
+		else if (i1.endTime > i2.startTime) newEvents.push({
+			startTime: i1.endTime,
+			endTime: i2.endTime,
+			start: (i2.start * (i2.endTime - i1.endTime) + i2.end * (i1.endTime - i2.startTime)) / (i2.endTime - i2.startTime),
+			end: i1.end,
+			start2: (i2.start2 * (i2.endTime - i1.endTime) + i2.end2 * (i1.endTime - i2.startTime)) / (i2.endTime - i2.startTime),
+			end2: i1.end2
+		});
+	}
+	//合并相同变化率事件
+	const newEvents2 = [newEvents.shift()];
+	for (const i2 of newEvents) {
+		const i1 = newEvents2[newEvents2.length - 1];
+		const d1 = i1.endTime - i1.startTime;
+		const d2 = i2.endTime - i2.startTime;
+		if (i2.startTime == i2.endTime);
+		else if (i1.end == i2.start && i1.end2 == i2.start2 && (i1.end - i1.start) * d2 == (i2.end - i2.start) * d1 && (i1.end2 - i1.start2) * d2 == (i2.end2 - i2.start2) * d1) {
+			i1.endTime = i2.endTime;
+			i1.end = i2.end;
+			i1.end2 = i2.end2;
+		} else newEvents2.push(i2);
+	}
+	return JSON.parse(JSON.stringify(newEvents2));
+}
+//规范speedEvents
+function arrangeSpeedEvent(events) {
+	const newEvents = [];
+	for (const i2 of events) {
+		const i1 = newEvents[newEvents.length - 1];
+		if (!i1 || i1.value != i2.value) newEvents.push(i2);
+		else i1.endTime = i2.endTime;
+	}
+	return JSON.parse(JSON.stringify(newEvents));
 }
 document.addEventListener("visibilitychange", () => document.visibilityState == "hidden" && btnPause.value == "暂停" && btnPause.click());
 document.addEventListener("pagehide", () => document.visibilityState == "hidden" && btnPause.value == "暂停" && btnPause.click()); //兼容Safari
@@ -1266,7 +1345,8 @@ btnPlay.addEventListener("click", async function() {
 		stopPlaying.push(playSound(res["mute"], true, false, 0)); //播放空音频(防止音画不同步)
 		("lines,notes,taps,drags,flicks,holds,reverseholds,tapholds").split(",").map(i => Renderer[i] = []);
 		Renderer.chart = prerenderChart(charts[selectchart.value]); //fuckqwq
-		stat.reset(Renderer.chart.numOfNotes, Renderer.chart.md5);
+		Renderer.chart2 = JSON.parse(JSON.stringify(charts[selectchart.value])); //fuckqwq2
+		stat.reset(Renderer.chart.numOfNotes, Renderer.chart.md5, selectspeed.value);
 		for (const i of chartLineData) {
 			if (selectchart.value == i.Chart) {
 				Renderer.chart.judgeLineList[i.LineId].images[0] = bgs[i.Image];
@@ -1283,7 +1363,7 @@ btnPlay.addEventListener("click", async function() {
 		Renderer.bgMusic = bgms[selectbgm.value];
 		this.value = "停止";
 		resizeCanvas();
-		duration = Renderer.bgMusic.duration / Number(selectspeed.value);
+		duration = Renderer.bgMusic.duration / config.speed;
 		isInEnd = false;
 		isOutStart = false;
 		isOutEnd = false;
@@ -1332,7 +1412,7 @@ btnPause.addEventListener("click", function() {
 		qwqIn.play();
 		if (showTransition.checked && isOutStart) qwqOut.play();
 		isPaused = false;
-		if (isInEnd && !isOutStart) playBgm(Renderer.bgMusic, timeBgm * Number(selectspeed.value));
+		if (isInEnd && !isOutStart) playBgm(Renderer.bgMusic, timeBgm * config.speed);
 		this.value = "暂停";
 	}
 });
@@ -1344,14 +1424,14 @@ inputOffset.addEventListener("input", function() {
 function playBgm(data, offset) {
 	isPaused = false;
 	if (!offset) offset = 0;
-	curTimestamp = Date.now();
-	stopPlaying.push(playSound(data, false, true, offset, Number(selectspeed.value)));
+	curTimestamp = performance.now();
+	stopPlaying.push(playSound(data, false, true, offset, config.speed));
 }
 let fucktemp = false;
 let fucktemp2 = false;
 //作图
 function loop() {
-	const now = Date.now();
+	const now = performance.now();
 	//计算时间
 	if (qwqOut.second < 0.67) {
 		calcqwq(now);
@@ -1372,7 +1452,7 @@ function loop() {
 	ctx.globalAlpha = 0.8;
 	ctx.textAlign = "right";
 	ctx.textBaseline = "middle";
-	ctx.fillText(`Phigros Simulator v${_i[1].join('.')} - Code by lch\x7ah3473`, (canvas.width + canvasos.width) / 2 - lineScale * 0.1, canvas.height - lineScale * 0.2);
+	ctx.fillText(`Phigros Simulator v${_i[1].join('.')} - Code by lchz\x683\x3473`, (canvas.width + canvasos.width) / 2 - lineScale * 0.1, canvas.height - lineScale * 0.2);
 	stopDrawing = requestAnimationFrame(loop); //回调更新动画
 }
 
@@ -1387,7 +1467,7 @@ function calcqwq(now) {
 		isOutEnd = true;
 		qwqOut.play();
 	}
-	timeChart = Math.max(timeBgm - Renderer.chart.offset / Number(selectspeed.value) - (Number(inputOffset.value) / 1e3 || 0), 0);
+	timeChart = Math.max(timeBgm - Renderer.chart.offset / config.speed - (Number(inputOffset.value) / 1e3 || 0), 0);
 	//遍历判定线events和Note
 	for (const line of Renderer.lines) {
 		for (const i of line.judgeLineDisappearEvents) {
@@ -1417,7 +1497,7 @@ function calcqwq(now) {
 		for (const i of line.speedEvents) {
 			if (timeChart < i.startRealTime) break;
 			if (timeChart > i.endRealTime) continue;
-			line.positionY = (timeChart - i.startRealTime) * i.value * Number(selectspeed.value) + i.floorPosition;
+			line.positionY = (timeChart - i.startRealTime) * i.value * config.speed + i.floorPosition;
 		}
 		for (const i of line.notesAbove) {
 			i.cosr = line.cosr;
@@ -1432,14 +1512,14 @@ function calcqwq(now) {
 
 		function getY(i) {
 			if (!i.badtime) return realgetY(i);
-			if (Date.now() - i.badtime > 500) delete i.badtime;
+			if (performance.now() - i.badtime > 500) delete i.badtime;
 			if (!i.badY) i.badY = realgetY(i);
 			return i.badY;
 		}
 
 		function realgetY(i) {
 			if (i.type != 3) return (i.floorPosition - line.positionY) * i.speed;
-			if (i.realTime < timeChart) return (i.realTime - timeChart) * i.speed * Number(selectspeed.value);
+			if (i.realTime < timeChart) return (i.realTime - timeChart) * i.speed * config.speed;
 			return i.floorPosition - line.positionY;
 		}
 
@@ -1448,10 +1528,10 @@ function calcqwq(now) {
 			i.offsetX = i.projectX + dy * i.sinr;
 			i.projectY = line.offsetY + dx * i.sinr;
 			i.offsetY = i.projectY - dy * i.cosr;
-			i.visible = Math.abs(i.offsetX - wlen) + Math.abs(i.offsetY - hlen) < wlen * 1.23625 + hlen + hlen2 * i.realHoldTime * i.speed * Number(selectspeed.value);
-			if (i.badtime) i.alpha = 1 - range((Date.now() - i.badtime) / 500);
+			i.visible = Math.abs(i.offsetX - wlen) + Math.abs(i.offsetY - hlen) < wlen * 1.23625 + hlen + hlen2 * i.realHoldTime * i.speed * config.speed;
+			if (i.badtime) i.alpha = 1 - range((performance.now() - i.badtime) / 500);
 			else if (i.realTime > timeChart) {
-				if (dy > -1e-3 * hlen2) i.alpha = (i.type == 3 && i.speed == 0) ? (showPoint.checked ? 0.45 : 0) : 1;
+				if (dy > -1e-3 * hlen2) i.alpha = (i.type == 3 && i.speed == 0) ? (showPoint.checked ? 0.45 : 0) : qwq[5] ? Math.max(1 + (timeChart - i.realTime) / 1.5, 0) : 1; //过线前1.5s出现
 				else i.alpha = showPoint.checked ? 0.45 : 0;
 				//i.frameCount = 0;
 			} else {
@@ -1474,6 +1554,10 @@ function calcqwq(now) {
 	clickEvents2.defilter(i => now >= i.time + i.duration); //清除打击特效
 	for (const i in mouse) mouse[i] instanceof Click && mouse[i].animate();
 	for (const i in touch) touch[i] instanceof Click && touch[i].animate();
+	if (qwq[4] && stat.good + stat.bad) {
+		stat.reset();
+		specialClick.func[1]();
+	}
 }
 
 function qwqdraw1(now) {
@@ -1491,6 +1575,7 @@ function qwqdraw1(now) {
 			ctxos.globalAlpha = 1 - tick; //不透明度
 			ctxos.fillText(i.text, 0, -noteScale * 192);
 		}
+	if (qwq[4]) ctxos.filter = `hue-rotate(${energy*360/7}deg)`;
 	for (const i of clickEvents1) { //绘制打击特效1
 		const tick = (now - i.time) / i.duration;
 		ctxos.globalAlpha = 1;
@@ -1504,6 +1589,7 @@ function qwqdraw1(now) {
 			ctxos.fillRect(ds * Math.cos(j[1]) - r3 / 2, ds * Math.sin(j[1]) - r3 / 2, r3, r3);
 		}
 	}
+	if (qwq[4]) ctxos.filter = "none";
 	if (document.getElementById("feedback").checked) {
 		for (const i of clickEvents0) { //绘制打击特效0
 			ctxos.globalAlpha = 0.85;
@@ -1547,12 +1633,16 @@ function qwqdraw1(now) {
 		for (const i of Renderer.reverseholds) drawNote(i, timeChart, 3);
 	}
 	//绘制背景
+	if (qwq[4]) ctxos.filter = `hue-rotate(${energy*360/7}deg)`;
 	if (qwqIn.second >= 2.5) drawLine(stat.lineStatus ? 2 : 1); //绘制判定线(背景前1)
+	if (qwq[4]) ctxos.filter = "none";
 	ctxos.resetTransform();
 	ctxos.fillStyle = "#000"; //背景变暗
 	ctxos.globalAlpha = selectglobalalpha.value == "" ? 0.6 : selectglobalalpha.value; //背景不透明度
 	ctxos.fillRect(0, 0, canvasos.width, canvasos.height);
+	if (qwq[4]) ctxos.filter = `hue-rotate(${energy*360/7}deg)`;
 	if (qwqIn.second >= 2.5 && !stat.lineStatus) drawLine(0); //绘制判定线(背景后0)
+	if (qwq[4]) ctxos.filter = "none";
 	ctxos.globalAlpha = 1;
 	ctxos.resetTransform();
 	if (document.getElementById("imageBlur").checked) {
@@ -1564,7 +1654,7 @@ function qwqdraw1(now) {
 	ctxos.globalCompositeOperation = "source-over";
 	//绘制进度条
 	ctxos.setTransform(canvasos.width / 1920, 0, 0, canvasos.width / 1920, 0, lineScale * (qwqIn.second < 0.67 ? (tween[2](qwqIn.second * 1.5) - 1) : -tween[2](qwqOut.second * 1.5)) * 1.75);
-	ctxos.drawImage(res["ProgressBar"], timeBgm / duration * 1920 - 1920, 0);
+	ctxos.drawImage(res["ProgressBar"], (qwq[5] ? duration - timeBgm : timeBgm) / duration * 1920 - 1920, 0);
 	//绘制文字
 	ctxos.resetTransform();
 	ctxos.fillStyle = "#fff";
@@ -1576,11 +1666,18 @@ function qwqdraw1(now) {
 		//歌名
 		ctxos.textBaseline = "alphabetic";
 		ctxos.font = `${lineScale * 1.1}px Mina`;
+		const dxsnm = ctxos.measureText(inputName.value || inputName.placeholder).width;
+		if (dxsnm > canvasos.width - lineScale * 1.5) ctxos.font = `${(lineScale) * 1.1/dxsnm*(canvasos.width-lineScale*1.5)}px Mina`;
 		ctxos.fillText(inputName.value || inputName.placeholder, wlen, hlen * 0.75);
 		//曲绘和谱师
 		ctxos.textBaseline = "top";
 		ctxos.font = `${lineScale * 0.55}px Mina`;
+		const dxi = ctxos.measureText(`Illustration designed by ${inputIllustrator.value || inputIllustrator.placeholder}`).width;
+		if (dxi > canvasos.width - lineScale * 1.5) ctxos.font = `${(lineScale) * 0.55/dxi*(canvasos.width-lineScale*1.5)}px Mina`;
 		ctxos.fillText(`Illustration designed by ${inputIllustrator.value || inputIllustrator.placeholder}`, wlen, hlen * 1.25 + lineScale * 0.15);
+		ctxos.font = `${lineScale * 0.55}px Mina`;
+		const dxc = ctxos.measureText(`Level designed by ${inputDesigner.value || inputDesigner.placeholder}`).width;
+		if (dxc > canvasos.width - lineScale * 1.5) ctxos.font = `${(lineScale) * 0.55/dxc*(canvasos.width-lineScale*1.5)}px Mina`;
 		ctxos.fillText(`Level designed by ${inputDesigner.value || inputDesigner.placeholder}`, wlen, hlen * 1.25 + lineScale * 1.0);
 		//判定线(装饰用)
 		ctxos.globalAlpha = 1;
@@ -1612,9 +1709,14 @@ function qwqdraw1(now) {
 	ctxos.textBaseline = "alphabetic";
 	ctxos.textAlign = "right";
 	ctxos.font = `${lineScale * 0.63}px Mina`;
+	const dxlvl = ctxos.measureText(inputLevel.value || inputLevel.placeholder).width;
+	if (dxlvl > wlen - lineScale) ctxos.font = `${(lineScale) * 0.63/dxlvl*(wlen - lineScale )}px Mina`;
 	ctxos.fillText(inputLevel.value || inputLevel.placeholder, canvasos.width - lineScale * 0.75, canvasos.height - lineScale * 0.66);
 	ctxos.drawImage(res["SongsNameBar"], lineScale * 0.53, canvasos.height - lineScale * 1.22, lineScale * 0.119, lineScale * 0.612);
 	ctxos.textAlign = "left";
+	ctxos.font = `${lineScale * 0.63}px Mina`;
+	const dxsnm = ctxos.measureText(inputName.value || inputName.placeholder).width;
+	if (dxsnm > wlen - lineScale) ctxos.font = `${(lineScale) * 0.63/dxsnm*(wlen - lineScale )}px Mina`;
 	ctxos.fillText(inputName.value || inputName.placeholder, lineScale * 0.85, canvasos.height - lineScale * 0.66);
 	ctxos.resetTransform();
 	if (qwq[0]) {
@@ -1624,7 +1726,7 @@ function qwqdraw1(now) {
 		ctxos.textBaseline = "middle";
 		ctxos.font = `${lineScale * 0.4}px Mina`;
 		ctxos.textAlign = "left";
-		ctxos.fillText(`${time2Str(timeBgm)}/${time2Str(duration)}${scfg()}`, lineScale * 0.05, lineScale * 0.5);
+		ctxos.fillText(`${time2Str(qwq[5]?duration-timeBgm:timeBgm)}/${time2Str(duration)}${scfg()}`, lineScale * 0.05, lineScale * 0.5);
 		ctxos.textAlign = "right";
 		ctxos.fillText(frameTimer.fps, canvasos.width - lineScale * 0.05, lineScale * 0.5);
 		ctxos.textBaseline = "alphabetic";
@@ -1680,7 +1782,7 @@ function qwqdraw2() {
 			stopPlaying.push(playSound(bgm, true, true, 0));
 			qwqEnd.reset();
 			qwqEnd.play();
-			fucktemp2 = stat.getData(autoplay.checked);
+			fucktemp2 = stat.getData(autoplay.checked, selectspeed.value);
 		}, 1000);
 		stopPlaying.push(() => clearTimeout(timeout));
 	}
@@ -1716,9 +1818,14 @@ function qwqdraw3(statData) {
 	ctxos.textBaseline = "middle";
 	ctxos.textAlign = "left";
 	ctxos.font = "80px Mina";
+	const dxsnm = ctxos.measureText(inputName.value || inputName.placeholder).width;
+	if (dxsnm > 1500) ctxos.font = `${80/dxsnm*1500}px Mina`;
 	ctxos.fillText(inputName.value || inputName.placeholder, 700 * tween[8](range(qwqEnd.second * 1.25)) - 320, 145);
 	ctxos.font = "30px Mina";
+	const dxlvl = ctxos.measureText(inputLevel.value || inputLevel.placeholder).width;
+	if (dxlvl > 750) ctxos.font = `${30/dxlvl*750}px Mina`;
 	ctxos.fillText(inputLevel.value || inputLevel.placeholder, 700 * tween[8](range(qwqEnd.second * 1.25)) - 317, 208);
+	ctxos.font = "30px Mina";
 	//Rank图标
 	ctxos.globalAlpha = range((qwqEnd.second - 1.87) * 3.75);
 	const qwq2 = 293 + range((qwqEnd.second - 1.87) * 3.75) * 100;
@@ -1727,20 +1834,22 @@ function qwqdraw3(statData) {
 	ctxos.drawImage(res["Ranks"][stat.rankStatus], 661 - qwq3 / 2, 545 - qwq3 / 2, qwq3, qwq3);
 	//各种数据
 	ctxos.globalAlpha = range((qwqEnd.second - 0.87) * 2.50);
-	ctxos.fillStyle = statData[0] ? "#18ffbf" : "#fff";
-	ctxos.fillText(statData[0] ? "NEW BEST" : "BEST", 898, 428);
+	ctxos.fillStyle = statData.newBestColor;
+	ctxos.fillText(statData.newBestStr, 898, 428);
 	ctxos.fillStyle = "#fff";
 	ctxos.textAlign = "center";
-	ctxos.fillText(statData[1], 1180, 428);
+	ctxos.fillText(statData.scoreBest, 1180, 428);
 	ctxos.globalAlpha = range((qwqEnd.second - 1.87) * 2.50);
 	ctxos.textAlign = "right";
-	ctxos.fillText(statData[2], 1414, 428);
+	ctxos.fillText(statData.scoreDelta, 1414, 428);
 	ctxos.globalAlpha = range((qwqEnd.second - 0.95) * 1.50);
 	ctxos.textAlign = "left";
 	ctxos.fillText(stat.accStr, 352, 545);
 	ctxos.fillText(stat.maxcombo, 1528, 545);
-	ctxos.fillStyle = statData[4];
-	ctxos.fillText(statData[3], 1355, 590);
+	ctxos.fillStyle = statData.textAboveColor;
+	ctxos.fillText(statData.textAboveStr, 383 + Math.min(dxlvl, 750), 208);
+	ctxos.fillStyle = statData.textBelowColor;
+	ctxos.fillText(statData.textBelowStr, 1355, 590);
 	ctxos.fillStyle = "#fff";
 	ctxos.textAlign = "center";
 	ctxos.font = "86px Mina";
@@ -1792,7 +1901,7 @@ function drawNote(note, realTime, type) {
 	ctxos.globalAlpha = note.alpha;
 	ctxos.setTransform(...imgFlip(noteScale * note.cosr, noteScale * note.sinr, -noteScale * note.sinr, noteScale * note.cosr, note.offsetX, note.offsetY));
 	if (type == 3) {
-		const baseLength = hlen2 / noteScale * note.speed * Number(selectspeed.value);
+		const baseLength = hlen2 / noteScale * note.speed * config.speed;
 		const holdLength = baseLength * note.realHoldTime;
 		if (note.realTime > realTime) {
 			if (HL) {
@@ -1827,12 +1936,6 @@ function chart123(chart) {
 		case 1: {
 			newChart.formatVersion = 3;
 			for (const i of newChart.judgeLineList) {
-				let y = 0;
-				for (const j of i.speedEvents) {
-					if (j.startTime < 0) j.startTime = 0;
-					j.floorPosition = y;
-					y += (j.endTime - j.startTime) * j.value / i.bpm * 1.875;
-				}
 				for (const j of i.judgeLineDisappearEvents) {
 					j.start2 = 0;
 					j.end2 = 0;
@@ -1849,7 +1952,16 @@ function chart123(chart) {
 				}
 			}
 		}
-		case 3: {}
+		case 3: {
+			for (const i of newChart.judgeLineList) {
+				let y = 0;
+				for (const j of i.speedEvents) {
+					if (j.startTime < 0) j.startTime = 0;
+					j.floorPosition = y;
+					y = Math.fround(y + (j.endTime - j.startTime) * j.value / i.bpm * 1.875); //float32
+				}
+			}
+		}
 		case 3473:
 			break;
 		default:
@@ -1873,11 +1985,11 @@ function chartp23(pec, filename) {
 		}
 	}
 	class JudgeLine {
-		numOfNotes = 0;
-		numOfNotesAbove = 0;
-		numOfNotesBelow = 0;
-		bpm = 120;
 		constructor(bpm) {
+			this.numOfNotes = 0;
+			this.numOfNotesAbove = 0;
+			this.numOfNotesBelow = 0;
+			this.bpm = 120;
 			this.bpm = bpm;
 			("speedEvents,notesAbove,notesBelow,judgeLineDisappearEvents,judgeLineMoveEvents,judgeLineRotateEvents,judgeLineDisappearEventsPec,judgeLineMoveEventsPec,judgeLineRotateEventsPec").split(",").map(i => this[i] = []);
 		}
@@ -1891,7 +2003,8 @@ function chartp23(pec, filename) {
 					this.notesBelow.push(note);
 					break;
 				default:
-					throw "wrong note position"
+					this.notesBelow.push(note);
+					console.warn("Warning: Illeagal Note Side: " + pos);
 			}
 			if (!isFake) {
 				this.numOfNotes++;
@@ -2027,25 +2140,29 @@ function chartp23(pec, filename) {
 	let linesPec = [];
 	for (const i of raw.n1) {
 		if (!linesPec[i[0]]) linesPec[i[0]] = new JudgeLine(baseBpm);
-		linesPec[i[0]].pushNote(new Note(1, calcTime(i[1]) + (i[4] ? 1e9 : 0), i[2] * 9 / 1024, 0, i[5]), i[3], i[4]);
+		linesPec[i[0]].pushNote(new Note(1, calcTime(i[1]) + (i[4] ? 1e9 : 0), i[2] / 115.2, 0, i[5]), i[3], i[4]);
+		if (i[3] != 1 && i[3] != 2) message.sendWarning(`检测到非法方向:${i[3]}(将被视为2)\n位于:"n1 ${i.slice(0, 5).join(" ")}"\n来自${filename}`);
 		if (i[4]) message.sendWarning(`检测到FakeNote(可能无法正常显示)\n位于:"n1 ${i.slice(0, 5).join(" ")}"\n来自${filename}`);
 		if (i[6] != 1) message.sendWarning(`检测到异常Note(可能无法正常显示)\n位于:"n1 ${i.slice(0, 5).join(" ")} # ${i[5]} & ${i[6]}"\n来自${filename}`);
 	} //102.4
 	for (const i of raw.n2) {
 		if (!linesPec[i[0]]) linesPec[i[0]] = new JudgeLine(baseBpm);
-		linesPec[i[0]].pushNote(new Note(3, calcTime(i[1]) + (i[5] ? 1e9 : 0), i[3] * 9 / 1024, calcTime(i[2]) - calcTime(i[1]), i[6]), i[4], i[5]);
+		linesPec[i[0]].pushNote(new Note(3, calcTime(i[1]) + (i[5] ? 1e9 : 0), i[3] / 115.2, calcTime(i[2]) - calcTime(i[1]), i[6]), i[4], i[5]);
+		if (i[4] != 1 && i[4] != 2) message.sendWarning(`检测到非法方向:${i[4]}(将被视为2)\n位于:"n2 ${i.slice(0, 5).join(" ")} # ${i[6]} & ${i[7]}"\n来自${filename}`);
 		if (i[5]) message.sendWarning(`检测到FakeNote(可能无法正常显示)\n位于:"n2 ${i.slice(0, 6).join(" ")}"\n来自${filename}`);
 		if (i[7] != 1) message.sendWarning(`检测到异常Note(可能无法正常显示)\n位于:"n2 ${i.slice(0, 5).join(" ")} # ${i[6]} & ${i[7]}"\n来自${filename}`);
 	}
 	for (const i of raw.n3) {
 		if (!linesPec[i[0]]) linesPec[i[0]] = new JudgeLine(baseBpm);
-		linesPec[i[0]].pushNote(new Note(4, calcTime(i[1]) + (i[4] ? 1e9 : 0), i[2] * 9 / 1024, 0, i[5]), i[3], i[4]);
+		linesPec[i[0]].pushNote(new Note(4, calcTime(i[1]) + (i[4] ? 1e9 : 0), i[2] / 115.2, 0, i[5]), i[3], i[4]);
+		if (i[3] != 1 && i[3] != 2) message.sendWarning(`检测到非法方向:${i[3]}(将被视为2)\n位于:"n3 ${i.slice(0, 5).join(" ")} # ${i[5]} & ${i[6]}"\n来自${filename}`);
 		if (i[4]) message.sendWarning(`检测到FakeNote(可能无法正常显示)\n位于:"n3 ${i.slice(0, 5).join(" ")}"\n来自${filename}`);
 		if (i[6] != 1) message.sendWarning(`检测到异常Note(可能无法正常显示)\n位于:"n3 ${i.slice(0, 5).join(" ")} # ${i[5]} & ${i[6]}"\n来自${filename}`);
 	}
 	for (const i of raw.n4) {
 		if (!linesPec[i[0]]) linesPec[i[0]] = new JudgeLine(baseBpm);
-		linesPec[i[0]].pushNote(new Note(2, calcTime(i[1]) + (i[4] ? 1e9 : 0), i[2] * 9 / 1024, 0, i[5]), i[3], i[4]);
+		linesPec[i[0]].pushNote(new Note(2, calcTime(i[1]) + (i[4] ? 1e9 : 0), i[2] / 115.2, 0, i[5]), i[3], i[4]);
+		if (i[3] != 1 && i[3] != 2) message.sendWarning(`检测到非法方向:${i[3]}(将被视为2)\n位于:"n4 ${i.slice(0, 5).join(" ")} # ${i[5]} & ${i[6]}"\n来自${filename}`);
 		if (i[4]) message.sendWarning(`检测到FakeNote(可能无法正常显示)\n位于:"n4 ${i.slice(0, 5).join(" ")}"\n来自${filename}`);
 		if (i[6] != 1) message.sendWarning(`检测到异常Note(可能无法正常显示)\n位于:"n4 ${i.slice(0, 5).join(" ")} # ${i[5]} & ${i[6]}"\n来自${filename}`);
 	}
