@@ -1,12 +1,25 @@
 {
 	"compilerOptions": {
-		"module": "commonjs",
-		"target": "es6"
+		"module": "CommonJS",
+		"target": "ESNext",
+		"baseUrl": ".",
+		"paths": {
+			"/utils/*": [
+				"utils/*"
+			],
+			"js/*": [
+				"js/*"
+			],
+		},
 	},
 	"include": [
-		"js/*","./script.js"
+		"js/*",
+		"utils/*",
+		"worker/*",
+		"./script.js"
 	],
 	"exclude": [
-		"**/*-min.*"
-	]
+		"**/*-min.*",
+		"**/* copy.*"
+	],
 }
